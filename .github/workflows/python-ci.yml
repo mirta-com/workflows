@@ -1,0 +1,112 @@
+name: Python CI Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      PYTHON_VERSION:
+        required: false
+        type: string
+        default: "3.9"
+      POETRY_VERSION:
+        required: false
+        type: string
+        default: "1.2.2"
+      POSTGRES_IMAGE:
+        required: false
+        type: string
+        default: "postgres:11.13-alpine"
+      POSTGRES_DB_SCHEMA:
+        required: false
+        type: string
+        description: |
+          passing a string will enable the creation of a schema with said name,
+          and the application of the migrations, which are expected to be found
+          in the conventional `/db` directory
+
+concurrency:
+  # New commit on branch cancels running workflows of the same branch
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: ${{ inputs.POSTGRES_IMAGE }}
+        env:
+          POSTGRES_USER: ci-user
+          POSTGRES_PASSWORD: ci-password
+          POSTGRES_DB: ci-database
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+        ports:
+          - 5432:5432
+        options: >-
+          --name="postgres"
+          --health-cmd="pg_isready"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: webfactory/ssh-agent@v0.6.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - uses: actions/setup-python@v4
+        id: setup-python
+        with:
+          python-version: ${{ inputs.PYTHON_VERSION }}
+
+      - name: Load cached Poetry installation
+        uses: actions/cache@v3
+        with:
+          path: ~/.local # the path depends on the OS
+          key: poetry-1 # increment to reset cache
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: ${{ inputs.POETRY_VERSION }}
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+          installer-parallel: true
+
+      - name: Load Cached Venv
+        id: cache-deps
+        uses: actions/cache@v3
+        with:
+          path: .venv
+          key: "venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}"
+
+      - name: Install Dependencies
+        run: poetry install --no-interaction
+
+      - name: Verify python imports order
+        run: poetry run isort --check src tests
+
+      - name: Verify code formatting (Black)
+        run: poetry run black --verbose --check src tests
+
+      - name: Enforce code style (Flake8)
+        run: poetry run flake8 src tests
+
+      - name: Apply migrations
+        if: ${{ inputs.POSTGRES_DB_SCHEMA != '' }}
+        run: |
+          docker exec postgres psql -U ci-user -d ci-database -c "CREATE SCHEMA IF NOT EXISTS ${{ inputs.POSTGRES_DB_SCHEMA }};"
+          pg_uri="postgres://ci-user:ci-password@localhost:5432/ci-database?sslmode=disable&search_path=${{ inputs.POSTGRES_DB_SCHEMA }}"
+          docker run --rm --network host -v ${PWD}/db/migrations:/migrations migrate/migrate -path=/migrations \
+            -database $pg_uri up
+
+      - name: Run Tests
+        env:
+          AWS_ACCESS_KEY_ID: doesnt-matter
+          AWS_SECRET_ACCESS_KEY: doesnt-matter
+          POSTGRES_USER: ci-user
+          POSTGRES_PASSWORD: ci-password
+          POSTGRES_DB: ci-database
+        run: make test
