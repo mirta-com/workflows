@@ -1,0 +1,216 @@
+name: Python CD Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      SERVICE_NAME:
+        required: true
+        type: string
+      ENV:
+        required: true
+        type: string
+        description: |
+          one of 'dev' or 'prod'
+      GIT_REF:
+        required: true
+        type: string
+        description: |
+          git sha of the commit to build (only for dev) and deploy
+      BUILD_MIGRATIONS:
+        required: false
+        type: boolean
+        default: false
+        description: |
+          if true, it expects to find the conventional migrations folder under `/db`
+      AWS_ACCOUNT:
+        required: true
+        type: string
+      AWS_REGION:
+        required: true
+        type: string
+      AWS_ROLE_TO_ASSUME:
+        required: true
+        type: string
+      SLACK_CHANNEL:
+        required: false
+        type: string
+
+jobs:
+  init:
+    runs-on: ubuntu-latest
+    outputs:
+      host-registry: ${{ steps.registry.outputs.host-registry }}
+      repo-registry: ${{ steps.registry.outputs.repo-registry }}
+    steps:
+      - name: Check Inputs
+        shell: python
+        run: |
+          if "${{ inputs.ENV }}" not in ["dev", "prod"]:
+            raise ValueError("Invalid ENV input. Expected dev or prod")
+
+      - name: Concat Container Registry
+        id: registry
+        run: |
+          HOST_REGISTRY="${{ inputs.AWS_ACCOUNT }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com"
+          REPO_REGISTRY="${{ inputs.AWS_ACCOUNT }}.dkr.ecr.${{ inputs.AWS_REGION }}.amazonaws.com/mirta/${{ inputs.SERVICE_NAME }}"
+          echo "host-registry=$HOST_REGISTRY" >> $GITHUB_OUTPUT
+          echo "repo-registry=$REPO_REGISTRY" >> $GITHUB_OUTPUT
+
+  build:
+    runs-on: ubuntu-latest
+    needs: init
+    if: ${{ inputs.ENV == 'dev' }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.GIT_REF }}
+
+      - uses: webfactory/ssh-agent@v0.6.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Configure ${{ inputs.ENV }} AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1-node16
+        with:
+          aws-access-key-id: ${{ secrets.LAMBDA_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.LAMBDA_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ inputs.AWS_REGION }}
+          role-to-assume: ${{ inputs.AWS_ROLE_TO_ASSUME }}
+          role-duration-seconds: 1200
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region ${{ inputs.AWS_REGION }} | \
+            docker login --username AWS --password-stdin ${{ needs.init.outputs.host-registry }}
+
+      - name: Generate Migrations tags and image meta
+        if: ${{ inputs.BUILD_MIGRATIONS }}
+        id: meta-migrations
+        uses: docker/metadata-action@v4
+        with:
+          images: |
+            ${{ needs.init.outputs.repo-registry }}
+          tags: |
+            type=raw,value=migrations-${{ inputs.GIT_REF }}
+
+      - name: Build and push Migrations image
+        if: ${{ inputs.BUILD_MIGRATIONS }}
+        uses: docker/build-push-action@v3
+        with:
+          ssh: default
+          push: true
+          context: ./db
+          file: ./db/aws/Dockerfile.migrations
+          tags: ${{ steps.meta-migrations.outputs.tags }}
+          labels: ${{ steps.meta-migrations.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate tags and image meta
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: |
+            ${{ needs.init.outputs.repo-registry }}
+          tags: |
+            type=raw,value=${{ inputs.GIT_REF }}
+
+      - name: Build and push lambdas image
+        uses: docker/build-push-action@v3
+        with:
+          ssh: default
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [init, build]
+    # ! https://github.com/actions/runner/issues/491
+    if: |
+      always() &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.GIT_REF }}
+
+      - name: Notify Slack Start
+        if: ${{ inputs.SLACK_CHANNEL != '' }}
+        id: slack
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        uses: mirta-com/github-action-slack-notify-build@v1.3.6
+        with:
+          channel: ${{ inputs.SLACK_CHANNEL }}
+          status: STARTING
+          color: warning
+          message: <https://github.com/${{ github.repository }}/commit/${{ inputs.GIT_REF }} | ${{ inputs.GIT_REF }}>
+
+      - name: Configure ${{ inputs.ENV }} AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1-node16
+        with:
+          aws-access-key-id: ${{ secrets.LAMBDA_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.LAMBDA_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ inputs.AWS_REGION }}
+          role-to-assume: ${{ inputs.AWS_ROLE_TO_ASSUME }}
+          role-duration-seconds: 1200
+
+        # ! needed to access deploy.sh script
+      - name: Checkout Reusable Workflows repo
+        uses: actions/checkout@v3
+        with:
+          repository: mirta-com/workflows
+          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          path: workflows-repo
+
+      - name: Deploy to ${{ inputs.ENV }}
+        id: deploy-script
+        run: ${GITHUB_WORKSPACE}/workflows-repo/deploy.sh
+        env:
+          PROJECT_ID: ${{ inputs.SERVICE_NAME }}
+          DEPLOY_ENV: ${{ inputs.ENV }}
+          AWS_ACCOUNT: ${{ inputs.AWS_ACCOUNT }}
+          AWS_REGION: ${{ inputs.AWS_REGION }}
+          TEMPLATE_PATH: template.yml
+          VERSION: ${{ inputs.GIT_REF }}
+          IMAGE_REPO: ${{ needs.init.outputs.repo-registry }}
+          IMAGE_TAG: ${{ inputs.GIT_REF }}
+          SAM_CLI_TELEMETRY: 0
+
+      - name: Run ${{ inputs.ENV }} Post Deploy
+        run: |
+          curl -X POST -H "Authorization: token ${{ secrets.GH_API_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/mirta-com/aws-tools/dispatches \
+            -d "{\"event_type\":\"deploy\", \"client_payload\":{\"env\":\"${{ inputs.ENV }}\"}}"
+
+      - name: Notify Slack Success
+        if: ${{ inputs.SLACK_CHANNEL != '' && steps.deploy-script.outcome == 'success' }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        uses: mirta-com/github-action-slack-notify-build@v1.3.6
+        with:
+          message_id: ${{ steps.slack.outputs.message_id }}
+          channel: ${{ inputs.SLACK_CHANNEL }}
+          status: SUCCESS
+          color: good
+          message: <https://github.com/${{ github.repository }}/commit/${{ inputs.GIT_REF }} | ${{ inputs.GIT_REF }}>
+
+      - name: Notify Slack Fail
+        if: ${{ failure() && inputs.SLACK_CHANNEL != '' }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        uses: mirta-com/github-action-slack-notify-build@v1.3.6
+        with:
+          message_id: ${{ steps.slack.outputs.message_id }}
+          channel: ${{ inputs.SLACK_CHANNEL }}
+          status: FAILED
+          color: danger
+          message: <https://github.com/${{ github.repository }}/commit/${{ inputs.GIT_REF }} | ${{ inputs.GIT_REF }}>
