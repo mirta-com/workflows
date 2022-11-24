@@ -86,13 +86,13 @@ jobs:
         run: poetry install --no-interaction
 
       - name: Verify python imports order
-        run: poetry run isort --check src tests
+        run: make isort OPTIONS="--check"
 
       - name: Verify code formatting (Black)
-        run: poetry run black --verbose --check src tests
+        run: make black OPTIONS="--verbose --check"
 
       - name: Enforce code style (Flake8)
-        run: poetry run flake8 src tests
+        run: make flake8
 
       - name: Apply migrations
         if: ${{ inputs.POSTGRES_DB_SCHEMA != '' }}
