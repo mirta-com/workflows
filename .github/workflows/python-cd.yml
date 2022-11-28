@@ -70,7 +70,7 @@ jobs:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Configure ${{ inputs.ENV }} AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v1-node16
+        uses: aws-actions/configure-aws-credentials@v1.6.1
         with:
           aws-access-key-id: ${{ secrets.LAMBDA_AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.LAMBDA_AWS_SECRET_ACCESS_KEY }}
@@ -154,7 +154,7 @@ jobs:
           message: <https://github.com/${{ github.repository }}/commit/${{ inputs.GIT_REF }} | ${{ inputs.GIT_REF }}>
 
       - name: Configure ${{ inputs.ENV }} AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v1-node16
+        uses: aws-actions/configure-aws-credentials@v1.6.1
         with:
           aws-access-key-id: ${{ secrets.LAMBDA_AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.LAMBDA_AWS_SECRET_ACCESS_KEY }}
