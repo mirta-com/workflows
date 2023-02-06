@@ -108,6 +108,7 @@ jobs:
           labels: ${{ steps.meta-migrations.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: false
 
       - name: Generate tags and image meta
         id: meta
@@ -127,6 +128,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: false
 
   deploy:
     runs-on: ubuntu-latest
@@ -141,17 +143,42 @@ jobs:
         with:
           ref: ${{ inputs.GIT_REF }}
 
+      - name: Prep deploy details
+        run: |
+          echo "repo-url=https://github.com/${{ github.repository }}" >> $GITHUB_ENV
+          echo "sha-url=https://github.com/${{ github.repository }}/commit/${{ github.sha }}" >> $GITHUB_ENV
+
       - name: Notify Slack Start
-        if: ${{ inputs.SLACK_CHANNEL != '' }}
         id: slack
+        uses: slackapi/slack-github-action@v1.23.0
         env:
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-        uses: mirta-com/github-action-slack-notify-build@v1.3.6
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_DEPLOY_BOT_TOKEN }}
         with:
-          channel: ${{ inputs.SLACK_CHANNEL }}
-          status: STARTING
-          color: warning
-          message: <https://github.com/${{ github.repository }}/commit/${{ inputs.GIT_REF }} | ${{ inputs.GIT_REF }}>
+          channel-id: ${{ inputs.SLACK_CHANNEL }}
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "Deployment started - <${{ env.repo-url }} | ${{ github.repository }}>"
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Job:* <${{ env.sha-url }}/checks | ${{ github.workflow }}>\n*Author:* ${{ github.triggering_actor }}\n*Commit:* <${{ env.sha-url }} | ${{ github.sha }}>\n*Attempt #:* ${{ github.run_attempt }}"
+                  },
+                  "accessory": {
+                    "type": "image",
+                    "image_url": "https://i.postimg.cc/fJWsyZLp/Warning-3.png",
+                    "alt_text": "warning"
+                  }
+                }
+              ]
+            }
 
       - name: Configure ${{ inputs.ENV }} AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1-node16
@@ -192,25 +219,67 @@ jobs:
             -d "{\"event_type\":\"deploy\", \"client_payload\":{\"env\":\"${{ inputs.ENV }}\"}}"
 
       - name: Notify Slack Success
-        if: ${{ inputs.SLACK_CHANNEL != '' && steps.deploy-script.outcome == 'success' }}
+        if: ${{ steps.deploy-script.outcome == 'success' && inputs.SLACK_CHANNEL != '' }}
+        uses: slackapi/slack-github-action@v1.23.0
         env:
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-        uses: mirta-com/github-action-slack-notify-build@v1.3.6
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_DEPLOY_BOT_TOKEN }}
         with:
-          message_id: ${{ steps.slack.outputs.message_id }}
-          channel: ${{ inputs.SLACK_CHANNEL }}
-          status: SUCCESS
-          color: good
-          message: <https://github.com/${{ github.repository }}/commit/${{ inputs.GIT_REF }} | ${{ inputs.GIT_REF }}>
+          channel-id: ${{ inputs.SLACK_CHANNEL }}
+          update-ts: ${{ steps.slack.outputs.ts }}
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "Deployment succeeded - <${{ env.repo-url }} | ${{ github.repository }}>"
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Job:* <${{ env.sha-url }}/checks | ${{ github.workflow }}>\n*Author:* ${{ github.triggering_actor }}\n*Commit:* <${{ env.sha-url }} | ${{ github.sha }}>\n*Attempt #:* ${{ github.run_attempt }}"
+                  },
+                  "accessory": {
+                    "type": "image",
+                    "image_url": "https://i.postimg.cc/nCdJQ59z/Pass-3.png",
+                    "alt_text": "success"
+                  }
+                }
+              ]
+            }
 
       - name: Notify Slack Fail
         if: ${{ failure() && inputs.SLACK_CHANNEL != '' }}
+        uses: slackapi/slack-github-action@v1.23.0
         env:
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-        uses: mirta-com/github-action-slack-notify-build@v1.3.6
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_DEPLOY_BOT_TOKEN }}
         with:
-          message_id: ${{ steps.slack.outputs.message_id }}
-          channel: ${{ inputs.SLACK_CHANNEL }}
-          status: FAILED
-          color: danger
-          message: <https://github.com/${{ github.repository }}/commit/${{ inputs.GIT_REF }} | ${{ inputs.GIT_REF }}>
+          channel-id: ${{ inputs.SLACK_CHANNEL }}
+          update-ts: ${{ steps.slack.outputs.ts }}
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "Deployment failed - <${{ env.repo-url }} | ${{ github.repository }}>"
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Job:* <${{ env.sha-url }}/checks | ${{ github.workflow }}>\n*Author:* ${{ github.triggering_actor }}\n*Commit:* <${{ env.sha-url }} | ${{ github.sha }}>\n*Attempt #:* ${{ github.run_attempt }}"
+                  },
+                  "accessory": {
+                    "type": "image",
+                    "image_url": "https://i.postimg.cc/qgx0pgk2/Fail-3.png",
+                    "alt_text": "fail"
+                  }
+                }
+              ]
+            }
