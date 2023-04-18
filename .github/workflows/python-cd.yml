@@ -22,6 +22,16 @@ on:
         default: false
         description: |
           if true, it expects to find the conventional migrations folder under `/db`
+      POETRY_VERSION:
+        required: false
+        type: string
+        default: "1.4.1"
+      EXPORT_REQUIREMENTS:
+        required: false
+        type: boolean
+        default: false
+        description: |
+          if true, before building the service docker image it will use poetry to generate the requirements file
       AWS_ACCOUNT:
         required: true
         type: string
@@ -110,6 +120,26 @@ jobs:
           cache-to: type=gha,mode=max
           provenance: false
 
+      - name: Load cached Poetry installation
+        if: ${{ inputs.EXPORT_REQUIREMENTS }}
+        uses: actions/cache@v3
+        with:
+          path: ~/.local # the path depends on the OS
+          key: poetry-1 # increment to reset cache
+
+      - name: Install Poetry
+        if: ${{ inputs.EXPORT_REQUIREMENTS }}
+        uses: snok/install-poetry@v1
+        with:
+          version: ${{ inputs.POETRY_VERSION }}
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+          installer-parallel: true
+
+      - name: Export requirements
+        if: ${{ inputs.EXPORT_REQUIREMENTS }}
+        run: poetry export -f requirements.txt --output requirements.txt --only main --without-hashes
+
       - name: Generate tags and image meta
         id: meta
         uses: docker/metadata-action@v4
@@ -124,6 +154,8 @@ jobs:
         with:
           ssh: default
           push: true
+          context: .
+          file: ./Dockerfile
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
