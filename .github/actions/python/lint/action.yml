@@ -1,0 +1,17 @@
+name: "Lint"
+description: "Runs linting checks"
+
+runs:
+  using: composite
+  steps:
+    - name: Verify python imports order
+      shell: bash
+      run: make isort OPTIONS="--check"
+
+    - name: Verify code formatting (Black)
+      shell: bash
+      run: make black OPTIONS="--verbose --check"
+
+    - name: Enforce code style (Flake8)
+      shell: bash
+      run: make flake8

@@ -1,0 +1,49 @@
+name: "Install requirements"
+description: "Installs Poetry and the project requirements"
+inputs:
+  SSH_PRIVATE_KEY:
+    required: true
+    description: "ssh private key to install from private repositories"
+  PYTHON_VERSION:
+    required: true
+    description: "python version. example '3.11'"
+  POETRY_VERSION:
+    required: true
+    description: "poetry version. example '1.4.1'"
+
+runs:
+  using: composite
+  steps:
+    - uses: webfactory/ssh-agent@v0.8.0
+      with:
+        ssh-private-key: ${{ inputs.SSH_PRIVATE_KEY }}
+
+    - uses: actions/setup-python@v4
+      id: setup-python
+      with:
+        python-version: ${{ inputs.PYTHON_VERSION }}
+
+    - name: Load cached Poetry installation
+      uses: actions/cache@v3
+      with:
+        path: ~/.local # the path depends on the OS
+        key: poetry-1 # increment to reset cache
+
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: ${{ inputs.POETRY_VERSION }}
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+        installer-parallel: true
+
+    - name: Load Cached Venv
+      id: cache-deps
+      uses: actions/cache@v3
+      with:
+        path: .venv
+        key: "venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}"
+
+    - name: Install Dependencies
+      shell: bash
+      run: poetry install --no-interaction
