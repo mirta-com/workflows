@@ -59,10 +59,10 @@ jobs:
 
     steps:
       - name: Checkout project repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Checkout Reusable Workflows repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: mirta-com/workflows
           path: workflows-repo
