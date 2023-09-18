@@ -103,7 +103,7 @@ jobs:
       - name: Generate Migrations tags and image meta
         if: ${{ inputs.BUILD_MIGRATIONS }}
         id: meta-migrations
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: |
             ${{ needs.init.outputs.repo-registry }}
@@ -139,7 +139,7 @@ jobs:
 
       - name: Generate tags and image meta
         id: meta
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: |
             ${{ needs.init.outputs.repo-registry }}
