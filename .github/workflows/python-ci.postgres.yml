@@ -1,0 +1,89 @@
+name: Python CI Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      PYTHON_VERSION:
+        required: false
+        type: string
+        default: "3.9"
+      POETRY_VERSION:
+        required: false
+        type: string
+        default: "1.2.2"
+      POSTGRES_IMAGE:
+        required: false
+        type: string
+        default: "postgres:11.13-alpine"
+      POSTGRES_DB_SCHEMA:
+        required: false
+        type: string
+        description: |
+          passing a string will enable the creation of a schema with said name,
+          and the application of the migrations, which are expected to be found
+          in the conventional `/db` directory
+
+concurrency:
+  # New commit on branch cancels running workflows of the same branch
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: doesnt-matter
+      AWS_SECRET_ACCESS_KEY: doesnt-matter
+      POSTGRES_USER: ci-user
+      POSTGRES_PASSWORD: ci-password
+      POSTGRES_DB: ci-database
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+    services:
+      postgres:
+        image: ${{ inputs.POSTGRES_IMAGE }}
+        env:
+          POSTGRES_USER: ${{ env.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ env.POSTGRES_DB }}
+          POSTGRES_HOST: ${{ env.POSTGRES_HOST }}
+          POSTGRES_PORT: ${{ env.POSTGRES_PORT }}
+        ports:
+          - 5432:5432
+        options: >-
+          --name="postgres"
+          --health-cmd="pg_isready"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - name: Checkout project repo
+        uses: actions/checkout@v4
+
+      - name: Checkout Reusable Workflows repo
+        uses: actions/checkout@v4
+        with:
+          repository: mirta-com/workflows
+          path: workflows-repo
+
+      - name: Apply migrations
+        if: ${{ inputs.POSTGRES_DB_SCHEMA != '' }}
+        run: |
+          docker exec postgres psql -U ${{ env.POSTGRES_USER }} -d ${{ env.POSTGRES_DB }} -c "CREATE SCHEMA IF NOT EXISTS ${{ inputs.POSTGRES_DB_SCHEMA }};"
+          pg_uri="postgres://${{ env.POSTGRES_USER }}:${{ env.POSTGRES_PASSWORD }}@${{ env.POSTGRES_HOST }}:${{ env.POSTGRES_PORT }}/${{ env.POSTGRES_DB }}?sslmode=disable&search_path=${{ inputs.POSTGRES_DB_SCHEMA }}"
+          docker run --rm --network host -v ${PWD}/db/migrations:/migrations migrate/migrate -path=/migrations \
+            -database $pg_uri up
+
+      - name: Install requirements
+        uses: ./workflows-repo/.github/actions/python/install-poetry-requirements
+        with:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          PYTHON_VERSION: ${{ inputs.PYTHON_VERSION }}
+          POETRY_VERSION: ${{ inputs.POETRY_VERSION }}
+
+      - name: Run Linters
+        uses: ./workflows-repo/.github/actions/python/lint
+
+      - name: Run Tests
+        run: make test
