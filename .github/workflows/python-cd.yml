@@ -32,6 +32,10 @@ on:
         default: false
         description: |
           if true, before building the service docker image it will use poetry to generate the requirements file
+      PREDEPLOY_GOMPLATE_ARGS:
+        required: false
+        type: string
+        description: command options to pass to the gomplate cli right before the deploy script
       AWS_ACCOUNT:
         required: true
         type: string
@@ -171,9 +175,17 @@ jobs:
       !contains(needs.*.result, 'failure') &&
       !contains(needs.*.result, 'cancelled')
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout project repo
+        uses: actions/checkout@v4
         with:
           ref: ${{ inputs.GIT_REF }}
+
+      - name: Checkout Reusable Workflows repo
+        uses: actions/checkout@v4
+        with:
+          repository: mirta-com/workflows
+          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          path: workflows-repo
 
       - name: Prep deploy details
         run: |
@@ -221,13 +233,11 @@ jobs:
           role-to-assume: ${{ inputs.AWS_ROLE_TO_ASSUME }}
           role-duration-seconds: 1200
 
-        # ! needed to access deploy.sh script
-      - name: Checkout Reusable Workflows repo
-        uses: actions/checkout@v4
+      - name: Pre-deploy template rendering
+        if: ${{ inputs.PREDEPLOY_GOMPLATE_ARGS != '' }}
+        uses: ./workflows-repo/.github/actions/gomplate
         with:
-          repository: mirta-com/workflows
-          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
-          path: workflows-repo
+          ARGS: ${{ inputs.PREDEPLOY_GOMPLATE_ARGS }}
 
       - name: Deploy to ${{ inputs.ENV }}
         id: deploy-script
