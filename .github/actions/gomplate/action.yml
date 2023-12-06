@@ -1,0 +1,27 @@
+name: "Render template"
+description: "Use gomplate to render the statemachine"
+inputs:
+  ARGS:
+    required: true
+    description: command options to pass to the gomplate cli
+
+runs:
+  using: composite
+  steps:
+    - name: add brew to path
+      shell: bash
+      run: echo "/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin" >> $GITHUB_PATH
+
+    - name: Set up gomplate
+      shell: bash
+      run: brew install gomplate
+
+    - name: Render state-machine template
+      uses: nick-fields/retry@v2
+      env:
+        AWS_TIMEOUT: "30000"
+      with:
+        timeout_seconds: 30
+        max_attempts: 5
+        command: |
+          gomplate ${{inputs.ARGS}}
