@@ -24,12 +24,14 @@ runs:
         python-version: ${{ inputs.PYTHON_VERSION }}
 
     - name: Load cached Poetry installation
+      id: cached-poetry
       uses: actions/cache@v3
       with:
         path: ~/.local # the path depends on the OS
-        key: poetry-2 # increment to reset cache
+        key: poetry-3 # increment to reset cache
 
     - name: Install Poetry
+      if: steps.cached-poetry.outputs.cache-hit != 'true'
       uses: snok/install-poetry@v1
       with:
         version: ${{ inputs.POETRY_VERSION }}
@@ -38,12 +40,13 @@ runs:
         installer-parallel: true
 
     - name: Load Cached Venv
-      id: cache-deps
+      id: cached-poetry-dependencies
       uses: actions/cache@v3
       with:
         path: .venv
-        key: "venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}"
+        key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
 
     - name: Install Dependencies
+      if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
       shell: bash
       run: poetry install --no-interaction
