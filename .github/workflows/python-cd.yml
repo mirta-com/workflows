@@ -187,7 +187,7 @@ jobs:
 
       - name: Notify Slack Start
         id: slack
-        uses: slackapi/slack-github-action@v1.24.0
+        uses: slackapi/slack-github-action@v1.25.0
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_DEPLOY_BOT_TOKEN }}
         with:
@@ -255,7 +255,7 @@ jobs:
 
       - name: Notify Slack Success
         if: ${{ steps.deploy-script.outcome == 'success' && inputs.SLACK_CHANNEL != '' }}
-        uses: slackapi/slack-github-action@v1.24.0
+        uses: slackapi/slack-github-action@v1.25.0
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_DEPLOY_BOT_TOKEN }}
         with:
@@ -288,7 +288,7 @@ jobs:
 
       - name: Notify Slack Fail
         if: ${{ failure() && inputs.SLACK_CHANNEL != '' }}
-        uses: slackapi/slack-github-action@v1.24.0
+        uses: slackapi/slack-github-action@v1.25.0
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_DEPLOY_BOT_TOKEN }}
         with:
